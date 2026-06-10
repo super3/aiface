@@ -2,7 +2,7 @@
 
 #define CONVO_SIZE 4096
 #define TEXT_PADDING 4
-#define GREETING "AiFace\n\nPress the mic to talk.\nHold for chats."
+#define EMPTY_PROMPT "How can\nI help you?"
 
 #define MAX_CONVS 20
 #define ID_LEN 24
@@ -14,6 +14,10 @@ static ScrollLayer *s_scroll_layer;
 static TextLayer *s_text_layer;
 static ActionBarLayer *s_action_bar;
 static GBitmap *s_mic_icon;
+
+// Empty-state shown for a blank conversation: a spark mark + prompt text.
+static Layer *s_spark_layer;
+static TextLayer *s_prompt_layer;
 
 static Window *s_menu_window;
 static MenuLayer *s_menu_layer;
@@ -68,10 +72,34 @@ static void prv_light_hold(uint32_t ms) {
 
 static const char *const DOTS[] = { "", ".", "..", "..." };
 
+// A sparkle: radiating spokes of alternating length from the layer's center.
+static void prv_spark_update(Layer *layer, GContext *ctx) {
+  GRect b = layer_get_bounds(layer);
+  GPoint c = GPoint(b.size.w / 2, b.size.h / 2);
+  graphics_context_set_stroke_color(ctx, PBL_IF_COLOR_ELSE(GColorOrange, GColorBlack));
+  const int spokes = 12;
+  for (int i = 0; i < spokes; i++) {
+    int32_t angle = TRIG_MAX_ANGLE * i / spokes;
+    int len = (i % 2 == 0) ? 27 : 15;
+    int16_t dx = (sin_lookup(angle) * len) / TRIG_MAX_RATIO;
+    int16_t dy = (-cos_lookup(angle) * len) / TRIG_MAX_RATIO;
+    graphics_context_set_stroke_width(ctx, (i % 2 == 0) ? 4 : 2);
+    graphics_draw_line(ctx, c, GPoint(c.x + dx, c.y + dy));
+  }
+}
+
 static void prv_refresh(void) {
-  const char *base = (strlen(s_convo) == 0) ? GREETING : s_convo;
+  bool empty = (strlen(s_convo) == 0 && !s_waiting);
+  layer_set_hidden(s_spark_layer, !empty);
+  layer_set_hidden(text_layer_get_layer(s_prompt_layer), !empty);
+  layer_set_hidden(scroll_layer_get_layer(s_scroll_layer), empty);
+  if (empty) {
+    text_layer_set_text(s_prompt_layer, s_transient[0] ? s_transient : EMPTY_PROMPT);
+    return;
+  }
+
   snprintf(s_display, sizeof(s_display), "%s%s%s%s",
-           base,
+           s_convo,
            s_waiting ? DOTS[s_anim_frame] : "",
            s_transient[0] ? "\n\n" : "",
            s_transient);
@@ -404,6 +432,21 @@ static void prv_window_load(Window *window) {
   scroll_layer_add_child(s_scroll_layer, text_layer_get_layer(s_text_layer));
   layer_add_child(root, scroll_layer_get_layer(s_scroll_layer));
 
+  // Empty-state: centered spark + prompt within the content area.
+  int16_t content_w = bounds.size.w - ACTION_BAR_WIDTH;
+  int16_t spark_top = bounds.size.h / 5;
+  s_spark_layer = layer_create(GRect(content_w / 2 - 30, spark_top, 60, 60));
+  layer_set_update_proc(s_spark_layer, prv_spark_update);
+  layer_add_child(root, s_spark_layer);
+
+  s_prompt_layer = text_layer_create(GRect(0, spark_top + 64, content_w, 64));
+  text_layer_set_font(s_prompt_layer, fonts_get_system_font(FONT_KEY_GOTHIC_28_BOLD));
+  text_layer_set_text_color(s_prompt_layer, GColorBlack);
+  text_layer_set_background_color(s_prompt_layer, GColorClear);
+  text_layer_set_text_alignment(s_prompt_layer, GTextAlignmentCenter);
+  text_layer_set_text(s_prompt_layer, EMPTY_PROMPT);
+  layer_add_child(root, text_layer_get_layer(s_prompt_layer));
+
   s_mic_icon = gbitmap_create_with_resource(RESOURCE_ID_IMAGE_MIC);
   s_action_bar = action_bar_layer_create();
   action_bar_layer_set_background_color(s_action_bar, GColorBlack);
@@ -417,6 +460,8 @@ static void prv_window_load(Window *window) {
 static void prv_window_unload(Window *window) {
   action_bar_layer_destroy(s_action_bar);
   gbitmap_destroy(s_mic_icon);
+  text_layer_destroy(s_prompt_layer);
+  layer_destroy(s_spark_layer);
   text_layer_destroy(s_text_layer);
   scroll_layer_destroy(s_scroll_layer);
 }
