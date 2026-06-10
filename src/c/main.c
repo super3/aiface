@@ -24,6 +24,24 @@ static char s_convo[CONVO_SIZE];
 static char s_display[CONVO_SIZE + 16];
 static bool s_waiting;
 
+// Keep the backlight on while a reply arrives and for a readable window after.
+#define LIGHT_READ_MS 10000
+static AppTimer *s_light_timer;
+
+static void prv_light_off(void *context) {
+  s_light_timer = NULL;
+  light_enable(false);
+}
+
+static void prv_light_hold(uint32_t ms) {
+  light_enable(true);
+  if (s_light_timer) {
+    app_timer_reschedule(s_light_timer, ms);
+  } else {
+    s_light_timer = app_timer_register(ms, prv_light_off, NULL);
+  }
+}
+
 // Width available for conversation text, i.e. screen minus the action bar.
 static int16_t prv_content_width(void) {
   return layer_get_bounds(window_get_root_layer(s_window)).size.w - ACTION_BAR_WIDTH;
@@ -187,6 +205,7 @@ static void prv_inbox_received(DictionaryIterator *iter, void *context) {
   Tuple *chunk = dict_find(iter, MESSAGE_KEY_CHUNK);
   if (chunk) {
     prv_convo_append(chunk->value->cstring);
+    prv_light_hold(LIGHT_READ_MS);
   }
   Tuple *status = dict_find(iter, MESSAGE_KEY_STATUS);
   if (status) {
@@ -196,6 +215,7 @@ static void prv_inbox_received(DictionaryIterator *iter, void *context) {
   if (dict_find(iter, MESSAGE_KEY_FINAL)) {
     s_waiting = false;
     vibes_short_pulse();
+    prv_light_hold(LIGHT_READ_MS);  // keep it lit so the reply is readable
     prv_save_convo();  // persist completed exchanges as they arrive
   }
   prv_refresh();
