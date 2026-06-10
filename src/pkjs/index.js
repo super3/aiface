@@ -93,9 +93,6 @@ function makeTitle(s) {
 }
 
 function appendDisplay(conv, str) {
-  if (conv.display.length === 0 && str.indexOf('\n\n') === 0) {
-    str = str.slice(2); // no leading blank lines at the very top
-  }
   conv.display += str;
   if (conv.display.length > DISPLAY_CAP) {
     conv.display = conv.display.slice(conv.display.length - DISPLAY_CAP);
@@ -223,7 +220,7 @@ function ask(prompt) {
 
   // Record the user turn. The watch already shows "You: ..." locally for
   // instant feedback, so we don't echo it back — only the reply is streamed.
-  appendDisplay(conv, '\n\nYou: ' + prompt + '\n\nAI:');
+  appendDisplay(conv, (conv.display.length ? '\n\n' : '') + 'You: ' + prompt + '\n\n');
   conv.messages.push({ role: 'user', content: prompt });
   if (conv.messages.length > MAX_HISTORY) {
     conv.messages.splice(0, conv.messages.length - MAX_HISTORY);
@@ -258,11 +255,11 @@ function ask(prompt) {
     var text = resp.choices[0].message.content.trim();
     var c = store.convs[convId];
     if (c) {
-      appendDisplay(c, ' ' + text);
+      appendDisplay(c, text);
       c.messages.push({ role: 'assistant', content: text });
       saveStore();
     }
-    enqueueText(' ' + text);
+    enqueueText(text);
     enqueue({ FINAL: 1 });
   };
   xhr.ontimeout = function() { sendStatus('[Timed out]'); };

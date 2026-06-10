@@ -23,9 +23,18 @@ static DictationSession *s_dictation;
 #endif
 
 static char s_convo[CONVO_SIZE];
-static char s_display[CONVO_SIZE + 16];
+static char s_display[CONVO_SIZE + 128];
 static bool s_waiting;
 static bool s_display_stream;  // true while the phone is streaming a switched convo
+
+// Animated "thinking" indicator shown while awaiting a reply.
+static int s_anim_frame;
+static AppTimer *s_anim_timer;
+
+// Transient status (e.g. a failed dictation) shown briefly without polluting
+// the conversation transcript.
+static char s_transient[64];
+static AppTimer *s_transient_timer;
 
 // Conversation list mirror (titles + ids) pushed from the phone for the menu.
 static char s_conv_ids[MAX_CONVS][ID_LEN];
@@ -33,6 +42,9 @@ static char s_conv_titles[MAX_CONVS][TITLE_LEN];
 static int s_conv_count;
 static int s_active_index;
 static char s_list_buf[LIST_BUF];
+
+static int s_pending_delete = -1;  // menu row armed for delete confirmation
+static AppTimer *s_del_timer;
 
 // Keep the backlight on while a reply arrives and for a readable window after.
 #define LIGHT_READ_MS 10000
@@ -54,9 +66,15 @@ static void prv_light_hold(uint32_t ms) {
 
 // ---- chat view ----------------------------------------------------------
 
+static const char *const DOTS[] = { "", ".", "..", "..." };
+
 static void prv_refresh(void) {
-  const char *shown = (strlen(s_convo) == 0) ? GREETING : s_convo;
-  snprintf(s_display, sizeof(s_display), "%s%s", shown, s_waiting ? " ..." : "");
+  const char *base = (strlen(s_convo) == 0) ? GREETING : s_convo;
+  snprintf(s_display, sizeof(s_display), "%s%s%s%s",
+           base,
+           s_waiting ? DOTS[s_anim_frame] : "",
+           s_transient[0] ? "\n\n" : "",
+           s_transient);
   text_layer_set_text(s_text_layer, s_display);
 
   int16_t screen_h = layer_get_bounds(window_get_root_layer(s_window)).size.h;
@@ -100,6 +118,40 @@ static void prv_convo_append(const char *str) {
   strncat(s_convo, str, CONVO_SIZE - cur - 1);
 }
 
+static void prv_anim_tick(void *context) {
+  if (s_waiting) {
+    s_anim_frame = (s_anim_frame + 1) % 4;
+    s_anim_timer = app_timer_register(350, prv_anim_tick, NULL);
+    prv_refresh();
+  } else {
+    s_anim_timer = NULL;
+  }
+}
+
+static void prv_start_anim(void) {
+  s_anim_frame = 0;
+  if (!s_anim_timer) {
+    s_anim_timer = app_timer_register(350, prv_anim_tick, NULL);
+  }
+}
+
+static void prv_clear_transient(void *context) {
+  s_transient_timer = NULL;
+  s_transient[0] = '\0';
+  prv_refresh();
+}
+
+static void prv_flash_transient(const char *msg) {
+  strncpy(s_transient, msg, sizeof(s_transient) - 1);
+  s_transient[sizeof(s_transient) - 1] = '\0';
+  if (s_transient_timer) {
+    app_timer_reschedule(s_transient_timer, 2500);
+  } else {
+    s_transient_timer = app_timer_register(2500, prv_clear_transient, NULL);
+  }
+  prv_refresh();
+}
+
 // ---- outbound commands --------------------------------------------------
 
 static void prv_send_u8(uint32_t key) {
@@ -122,14 +174,15 @@ static void prv_send_str(uint32_t key, const char *val) {
 static void prv_dictation_handler(DictationSession *session, DictationSessionStatus status,
                                   char *transcription, void *context) {
   if (status != DictationSessionStatusSuccess) {
-    prv_convo_append("\n\n[didn't catch that — press mic to retry]");
-    prv_refresh();
+    prv_flash_transient("Didn't catch that — try again");
     return;
   }
-  prv_convo_append(strlen(s_convo) == 0 ? "You: " : "\n\nYou: ");
+  if (strlen(s_convo) > 0) prv_convo_append("\n\n");
+  prv_convo_append("You: ");
   prv_convo_append(transcription);
-  prv_convo_append("\n\nAI:");
+  prv_convo_append("\n\n");
   s_waiting = true;
+  prv_start_anim();
   prv_refresh();
   prv_send_str(MESSAGE_KEY_TRANSCRIPT, transcription);
 }
@@ -166,9 +219,16 @@ static void prv_parse_list(const char *s) {
       s_conv_count++;
     }
   }
+  s_pending_delete = -1;
   if (s_menu_layer) {
     menu_layer_reload_data(s_menu_layer);
   }
+}
+
+static void prv_delete_disarm(void *context) {
+  s_del_timer = NULL;
+  s_pending_delete = -1;
+  if (s_menu_layer) menu_layer_reload_data(s_menu_layer);
 }
 
 static uint16_t prv_menu_num_rows(MenuLayer *menu, uint16_t section, void *ctx) {
@@ -180,12 +240,14 @@ static void prv_menu_draw_row(GContext *gctx, const Layer *cell, MenuIndex *idx,
     menu_cell_basic_draw(gctx, cell, "+ New Chat", NULL, NULL);
   } else {
     int i = idx->row - 1;
-    menu_cell_basic_draw(gctx, cell, s_conv_titles[i],
-                         (i == s_active_index) ? "current" : NULL, NULL);
+    const char *subtitle = (idx->row == s_pending_delete) ? "hold again to delete"
+                         : (i == s_active_index) ? "current" : NULL;
+    menu_cell_basic_draw(gctx, cell, s_conv_titles[i], subtitle, NULL);
   }
 }
 
 static void prv_menu_select(MenuLayer *menu, MenuIndex *idx, void *ctx) {
+  s_pending_delete = -1;  // a normal tap cancels any armed delete
   if (idx->row == 0) {
     prv_send_u8(MESSAGE_KEY_NEW_CHAT);
   } else {
@@ -195,9 +257,23 @@ static void prv_menu_select(MenuLayer *menu, MenuIndex *idx, void *ctx) {
 }
 
 static void prv_menu_select_long(MenuLayer *menu, MenuIndex *idx, void *ctx) {
-  if (idx->row >= 1) {
+  if (idx->row < 1) return;
+  if (s_pending_delete == idx->row) {
+    // Confirmed: second long-press on the same row.
     prv_send_str(MESSAGE_KEY_DELETE_CHAT, s_conv_ids[idx->row - 1]);
-    vibes_short_pulse();  // phone will push an updated list
+    s_pending_delete = -1;
+    if (s_del_timer) { app_timer_cancel(s_del_timer); s_del_timer = NULL; }
+    vibes_double_pulse();
+  } else {
+    // Arm this row; auto-disarm after a few seconds.
+    s_pending_delete = idx->row;
+    vibes_short_pulse();
+    if (s_del_timer) {
+      app_timer_reschedule(s_del_timer, 3000);
+    } else {
+      s_del_timer = app_timer_register(3000, prv_delete_disarm, NULL);
+    }
+    menu_layer_reload_data(menu);
   }
 }
 
@@ -278,14 +354,16 @@ static void prv_inbox_received(DictionaryIterator *iter, void *context) {
   Tuple *chunk = dict_find(iter, MESSAGE_KEY_CHUNK);
   if (chunk) {
     prv_convo_append(chunk->value->cstring);
-    if (!s_display_stream) prv_light_hold(LIGHT_READ_MS);
+    if (!s_display_stream) {
+      s_waiting = false;  // reply text is arriving; stop the thinking dots
+      prv_light_hold(LIGHT_READ_MS);
+    }
     prv_refresh();
   }
   Tuple *status = dict_find(iter, MESSAGE_KEY_STATUS);
   if (status) {
-    prv_convo_append(" ");
-    prv_convo_append(status->value->cstring);
-    prv_refresh();
+    s_waiting = false;
+    prv_flash_transient(status->value->cstring);
   }
   if (dict_find(iter, MESSAGE_KEY_FINAL)) {
     if (s_display_stream) {
