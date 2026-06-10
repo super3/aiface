@@ -83,6 +83,8 @@ static void prv_send_transcript(const char *text) {
 static void prv_dictation_handler(DictationSession *session, DictationSessionStatus status,
                                   char *transcription, void *context) {
   if (status != DictationSessionStatusSuccess) {
+    prv_convo_append("\n\n[didn't catch that — press mic to retry]");
+    prv_refresh();
     return;
   }
   prv_convo_append("\n\nYou: ");
@@ -203,6 +205,9 @@ static void prv_init(void) {
 
 #if defined(PBL_MICROPHONE)
   s_dictation = dictation_session_create(512, prv_dictation_handler, NULL);
+  // Skip the confirm/edit screen so the transcript sends as soon as STT returns.
+  dictation_session_enable_confirmation(s_dictation, false);
+  dictation_session_enable_error_dialogs(s_dictation, false);
 #endif
 
   window_stack_push(s_window, true);
