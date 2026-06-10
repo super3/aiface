@@ -15,9 +15,11 @@ static TextLayer *s_text_layer;
 static ActionBarLayer *s_action_bar;
 static GBitmap *s_mic_icon;
 
-// Empty-state shown for a blank conversation: a spark mark + prompt text.
+// Empty-state shown for a blank conversation: animated pulse rings + prompt.
 static Layer *s_spark_layer;
 static TextLayer *s_prompt_layer;
+static AppTimer *s_pulse_timer;
+static int s_pulse_phase;  // 0..99, drives the expanding rings
 
 static Window *s_menu_window;
 static MenuLayer *s_menu_layer;
@@ -72,21 +74,37 @@ static void prv_light_hold(uint32_t ms) {
 
 static const char *const DOTS[] = { "", ".", "..", "..." };
 
-// Pulse rings: a filled center dot with concentric rings radiating outward.
+// Pulse rings: a filled center dot emitting rings that expand and fade out.
+#define PULSE_RINGS 2
+#define PULSE_MAX_R 26
+
 static void prv_spark_update(Layer *layer, GContext *ctx) {
   GRect b = layer_get_bounds(layer);
   GPoint c = GPoint(b.size.w / 2, b.size.h / 2);
-  GColor accent = PBL_IF_COLOR_ELSE(GColorVividCerulean, GColorBlack);
 
-  graphics_context_set_fill_color(ctx, accent);
-  graphics_fill_circle(ctx, c, 5);
-
-  // Each ring is drawn as two adjacent circles for a consistent ~2px stroke.
-  graphics_context_set_stroke_color(ctx, accent);
-  const int radii[] = { 13, 14, 23, 24 };
-  for (unsigned i = 0; i < sizeof(radii) / sizeof(radii[0]); i++) {
-    graphics_draw_circle(ctx, c, radii[i]);
+  for (int j = 0; j < PULSE_RINGS; j++) {
+    int ph = (s_pulse_phase + j * (100 / PULSE_RINGS)) % 100;
+    int r = 5 + ph * (PULSE_MAX_R - 5) / 100;
+#ifdef PBL_COLOR
+    // Fade from cerulean toward the white background as the ring grows.
+    uint8_t cr = (uint8_t)(0 + 255 * ph / 100);
+    uint8_t cg = (uint8_t)(170 + (255 - 170) * ph / 100);
+    graphics_context_set_stroke_color(ctx, GColorFromRGB(cr, cg, 255));
+#else
+    graphics_context_set_stroke_color(ctx, GColorBlack);
+#endif
+    graphics_draw_circle(ctx, c, r);
+    if (r > 6) graphics_draw_circle(ctx, c, r - 1);
   }
+
+  graphics_context_set_fill_color(ctx, PBL_IF_COLOR_ELSE(GColorVividCerulean, GColorBlack));
+  graphics_fill_circle(ctx, c, 5);
+}
+
+static void prv_pulse_tick(void *context) {
+  s_pulse_phase = (s_pulse_phase + 3) % 100;
+  if (s_spark_layer) layer_mark_dirty(s_spark_layer);
+  s_pulse_timer = app_timer_register(60, prv_pulse_tick, NULL);
 }
 
 static void prv_refresh(void) {
@@ -95,8 +113,13 @@ static void prv_refresh(void) {
   layer_set_hidden(text_layer_get_layer(s_prompt_layer), !empty);
   layer_set_hidden(scroll_layer_get_layer(s_scroll_layer), empty);
   if (empty) {
+    if (!s_pulse_timer) s_pulse_timer = app_timer_register(60, prv_pulse_tick, NULL);
     text_layer_set_text(s_prompt_layer, s_transient[0] ? s_transient : EMPTY_PROMPT);
     return;
+  }
+  if (s_pulse_timer) {
+    app_timer_cancel(s_pulse_timer);
+    s_pulse_timer = NULL;
   }
 
   snprintf(s_display, sizeof(s_display), "%s%s%s%s",
@@ -459,6 +482,10 @@ static void prv_window_load(Window *window) {
 }
 
 static void prv_window_unload(Window *window) {
+  if (s_pulse_timer) {
+    app_timer_cancel(s_pulse_timer);
+    s_pulse_timer = NULL;
+  }
   action_bar_layer_destroy(s_action_bar);
   gbitmap_destroy(s_mic_icon);
   text_layer_destroy(s_prompt_layer);
