@@ -1,9 +1,9 @@
-# AiFace
+# Watch AI
 
 Talk to an LLM from your Pebble watch. Press **Select**, speak, and your words
 are transcribed on-device, sent through the phone to
 [OpenRouter](https://openrouter.ai), and the reply is rendered back on the
-watch. Hold **Select** to clear the conversation.
+watch. Hold **Select** for chats and settings.
 
 Works on modern Pebble hardware — Pebble 2 / Core 2 Duo (`diorite`), Pebble Time
 2 (`emery`), Pebble Round 2 (`gabbro`) — plus `basalt` and `flint`.

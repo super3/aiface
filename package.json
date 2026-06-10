@@ -3,7 +3,15 @@
   "author": "MakeAwesomeHappen",
   "version": "1.0.0",
   "keywords": [
-    "pebble-app"
+    "pebble-app",
+    "ai",
+    "chat",
+    "assistant",
+    "gpt",
+    "voice",
+    "ask",
+    "watch",
+    "openrouter"
   ],
   "private": true,
   "scripts": {
@@ -13,7 +21,7 @@
     "pebble-clay": "^1.0.4"
   },
   "pebble": {
-    "displayName": "AiFace",
+    "displayName": "Watch AI",
     "uuid": "507088e0-c205-4e65-9784-2388d24c1bf9",
     "sdkVersion": "3",
     "enableMultiJS": true,
