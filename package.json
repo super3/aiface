@@ -33,7 +33,8 @@
       "FINAL",
       "STATUS",
       "APIKEY",
-      "MODEL"
+      "MODEL",
+      "CLEAR"
     ],
     "resources": {
       "media": [

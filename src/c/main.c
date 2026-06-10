@@ -4,6 +4,13 @@
 #define TEXT_PADDING 4
 #define GREETING "AiFace\n\nPress the mic to talk.\nHold to clear."
 
+// Persist the tail of the conversation across launches. The watch gives each
+// app 4 kB total with a 256-byte cap per value, so chunk a bounded tail.
+#define PERSIST_KEY_NCHUNKS 1
+#define PERSIST_KEY_CHUNK_BASE 10
+#define PERSIST_CHUNK_BYTES 240
+#define PERSIST_CONVO_MAX 2400
+
 static Window *s_window;
 static ScrollLayer *s_scroll_layer;
 static TextLayer *s_text_layer;
@@ -67,6 +74,50 @@ static void prv_convo_append(const char *str) {
   strncat(s_convo, str, CONVO_SIZE - cur - 1);
 }
 
+static void prv_save_convo(void) {
+  size_t len = strlen(s_convo);
+  const char *src = s_convo;
+  if (len > PERSIST_CONVO_MAX) {  // keep only the most recent text
+    src += (len - PERSIST_CONVO_MAX);
+    len = PERSIST_CONVO_MAX;
+  }
+  int chunks = 0;
+  char buf[PERSIST_CHUNK_BYTES + 1];
+  for (size_t off = 0; off < len; off += PERSIST_CHUNK_BYTES) {
+    size_t n = len - off;
+    if (n > PERSIST_CHUNK_BYTES) n = PERSIST_CHUNK_BYTES;
+    memcpy(buf, src + off, n);
+    buf[n] = '\0';
+    persist_write_string(PERSIST_KEY_CHUNK_BASE + chunks, buf);
+    chunks++;
+  }
+  persist_write_int(PERSIST_KEY_NCHUNKS, chunks);
+}
+
+static void prv_load_convo(void) {
+  s_convo[0] = '\0';
+  if (!persist_exists(PERSIST_KEY_NCHUNKS)) {
+    return;
+  }
+  int chunks = persist_read_int(PERSIST_KEY_NCHUNKS);
+  char buf[PERSIST_CHUNK_BYTES + 1];
+  for (int i = 0; i < chunks; i++) {
+    if (persist_exists(PERSIST_KEY_CHUNK_BASE + i)) {
+      persist_read_string(PERSIST_KEY_CHUNK_BASE + i, buf, sizeof(buf));
+      prv_convo_append(buf);
+    }
+  }
+}
+
+static void prv_send_clear(void) {
+  DictionaryIterator *out;
+  if (app_message_outbox_begin(&out) != APP_MSG_OK) {
+    return;
+  }
+  dict_write_uint8(out, MESSAGE_KEY_CLEAR, 1);
+  app_message_outbox_send();
+}
+
 static void prv_send_transcript(const char *text) {
   DictionaryIterator *out;
   if (app_message_outbox_begin(&out) != APP_MSG_OK) {
@@ -113,6 +164,8 @@ static void prv_select_long_handler(ClickRecognizerRef recognizer, void *context
   prv_convo_append(GREETING);
   s_waiting = false;
   prv_refresh();
+  prv_save_convo();
+  prv_send_clear();  // reset the phone-side LLM context too
 }
 
 static void prv_up_handler(ClickRecognizerRef recognizer, void *context) {
@@ -143,6 +196,7 @@ static void prv_inbox_received(DictionaryIterator *iter, void *context) {
   if (dict_find(iter, MESSAGE_KEY_FINAL)) {
     s_waiting = false;
     vibes_short_pulse();
+    prv_save_convo();  // persist completed exchanges as they arrive
   }
   prv_refresh();
 }
@@ -179,7 +233,10 @@ static void prv_window_load(Window *window) {
   action_bar_layer_set_click_config_provider(s_action_bar, prv_click_config);
   action_bar_layer_add_to_window(s_action_bar, window);
 
-  prv_convo_append(GREETING);
+  prv_load_convo();
+  if (strlen(s_convo) == 0) {
+    prv_convo_append(GREETING);
+  }
   prv_refresh();
 }
 
@@ -214,6 +271,7 @@ static void prv_init(void) {
 }
 
 static void prv_deinit(void) {
+  prv_save_convo();
 #if defined(PBL_MICROPHONE)
   if (s_dictation) {
     dictation_session_destroy(s_dictation);

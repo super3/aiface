@@ -22,14 +22,34 @@ var SYSTEM_PROMPT =
 
 var CHUNK_SIZE = 180; // bytes per AppMessage, well under the inbox limit
 var MAX_HISTORY = 20; // messages kept for conversational context
+var HISTORY_KEY = 'aiface-history';
 
-var messages = [];
+function loadHistory() {
+  try {
+    return JSON.parse(localStorage.getItem(HISTORY_KEY)) || [];
+  } catch (e) {
+    return [];
+  }
+}
+
+function saveHistory() {
+  try {
+    localStorage.setItem(HISTORY_KEY, JSON.stringify(messages));
+  } catch (e) {}
+}
+
+var messages = loadHistory();
 
 Pebble.addEventListener('ready', function() {
   console.log('AiFace PKJS ready');
 });
 
 Pebble.addEventListener('appmessage', function(e) {
+  if (e.payload.CLEAR) {
+    messages = [];
+    saveHistory();
+    return;
+  }
   var transcript = e.payload.TRANSCRIPT;
   if (transcript) {
     ask(transcript);
@@ -49,6 +69,7 @@ function ask(prompt) {
   if (messages.length > MAX_HISTORY) {
     messages.splice(0, messages.length - MAX_HISTORY);
   }
+  saveHistory();
 
   var xhr = new XMLHttpRequest();
   xhr.open('POST', 'https://openrouter.ai/api/v1/chat/completions');
@@ -71,6 +92,7 @@ function ask(prompt) {
     }
     var text = resp.choices[0].message.content.trim();
     messages.push({ role: 'assistant', content: text });
+    saveHistory();
     sendChunks(' ' + text);
   };
   xhr.ontimeout = function() { sendStatus('[Timed out]'); };
