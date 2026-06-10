@@ -1,0 +1,42 @@
+{
+  "name": "aiface",
+  "author": "MakeAwesomeHappen",
+  "version": "1.0.0",
+  "keywords": [
+    "pebble-app"
+  ],
+  "private": true,
+  "scripts": {
+    "postinstall": "node scripts/patch-clay.js"
+  },
+  "dependencies": {
+    "pebble-clay": "^1.0.4"
+  },
+  "pebble": {
+    "displayName": "AiFace",
+    "uuid": "507088e0-c205-4e65-9784-2388d24c1bf9",
+    "sdkVersion": "3",
+    "enableMultiJS": true,
+    "targetPlatforms": [
+      "basalt",
+      "diorite",
+      "emery",
+      "flint",
+      "gabbro"
+    ],
+    "watchapp": {
+      "watchface": false
+    },
+    "messageKeys": [
+      "TRANSCRIPT",
+      "CHUNK",
+      "FINAL",
+      "STATUS",
+      "APIKEY",
+      "MODEL"
+    ],
+    "resources": {
+      "media": []
+    }
+  }
+}

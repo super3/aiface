@@ -1,0 +1,13 @@
+# Pebble build output
+build/
+*.pbw
+.lock-waf_*
+
+# Dependencies (restored via `npm install` / `pebble build`)
+node_modules/
+
+# Reference clone, not part of this project
+bobby-assistant/
+
+# OS / editor
+.DS_Store
