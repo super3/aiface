@@ -72,19 +72,20 @@ static void prv_light_hold(uint32_t ms) {
 
 static const char *const DOTS[] = { "", ".", "..", "..." };
 
-// A sparkle: radiating spokes of alternating length from the layer's center.
+// Pulse rings: a filled center dot with concentric rings radiating outward.
 static void prv_spark_update(Layer *layer, GContext *ctx) {
   GRect b = layer_get_bounds(layer);
   GPoint c = GPoint(b.size.w / 2, b.size.h / 2);
-  graphics_context_set_stroke_color(ctx, PBL_IF_COLOR_ELSE(GColorOrange, GColorBlack));
-  const int spokes = 12;
-  for (int i = 0; i < spokes; i++) {
-    int32_t angle = TRIG_MAX_ANGLE * i / spokes;
-    int len = (i % 2 == 0) ? 27 : 15;
-    int16_t dx = (sin_lookup(angle) * len) / TRIG_MAX_RATIO;
-    int16_t dy = (-cos_lookup(angle) * len) / TRIG_MAX_RATIO;
-    graphics_context_set_stroke_width(ctx, (i % 2 == 0) ? 4 : 2);
-    graphics_draw_line(ctx, c, GPoint(c.x + dx, c.y + dy));
+  GColor accent = PBL_IF_COLOR_ELSE(GColorVividCerulean, GColorBlack);
+
+  graphics_context_set_fill_color(ctx, accent);
+  graphics_fill_circle(ctx, c, 5);
+
+  // Each ring is drawn as two adjacent circles for a consistent ~2px stroke.
+  graphics_context_set_stroke_color(ctx, accent);
+  const int radii[] = { 13, 14, 23, 24 };
+  for (unsigned i = 0; i < sizeof(radii) / sizeof(radii[0]); i++) {
+    graphics_draw_circle(ctx, c, radii[i]);
   }
 }
 
