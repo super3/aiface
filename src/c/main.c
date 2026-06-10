@@ -397,19 +397,20 @@ static void prv_delete_disarm(void *context) {
   if (s_menu_layer) menu_layer_reload_data(s_menu_layer);
 }
 
-static int prv_settings_row(void) { return s_conv_count + 1; }
+// Rows: 0 = New Chat, 1 = Settings, 2.. = conversations.
+#define CONV_ROW_BASE 2
 
 static uint16_t prv_menu_num_rows(MenuLayer *menu, uint16_t section, void *ctx) {
-  return s_conv_count + 2;  // New Chat + conversations + Settings
+  return s_conv_count + CONV_ROW_BASE;
 }
 
 static void prv_menu_draw_row(GContext *gctx, const Layer *cell, MenuIndex *idx, void *ctx) {
   if (idx->row == 0) {
     menu_cell_basic_draw(gctx, cell, "+ New Chat", NULL, NULL);
-  } else if (idx->row == prv_settings_row()) {
+  } else if (idx->row == 1) {
     menu_cell_basic_draw(gctx, cell, "Settings", NULL, NULL);
   } else {
-    int i = idx->row - 1;
+    int i = idx->row - CONV_ROW_BASE;
     const char *subtitle = (idx->row == s_pending_delete) ? "hold again to delete"
                          : (i == s_active_index) ? "current" : NULL;
     menu_cell_basic_draw(gctx, cell, s_conv_titles[i], subtitle, NULL);
@@ -421,18 +422,18 @@ static void prv_menu_select(MenuLayer *menu, MenuIndex *idx, void *ctx) {
   if (idx->row == 0) {
     prv_send_u8(MESSAGE_KEY_NEW_CHAT);
     window_stack_pop(true);
-  } else if (idx->row == prv_settings_row()) {
+  } else if (idx->row == 1) {
     prv_open_settings();
   } else {
-    prv_send_str(MESSAGE_KEY_SWITCH_CHAT, s_conv_ids[idx->row - 1]);
+    prv_send_str(MESSAGE_KEY_SWITCH_CHAT, s_conv_ids[idx->row - CONV_ROW_BASE]);
     window_stack_pop(true);
   }
 }
 
 static void prv_menu_select_long(MenuLayer *menu, MenuIndex *idx, void *ctx) {
-  if (idx->row < 1 || idx->row >= prv_settings_row()) return;  // conversations only
+  if (idx->row < CONV_ROW_BASE) return;  // conversations only
   if (s_pending_delete == idx->row) {
-    prv_send_str(MESSAGE_KEY_DELETE_CHAT, s_conv_ids[idx->row - 1]);
+    prv_send_str(MESSAGE_KEY_DELETE_CHAT, s_conv_ids[idx->row - CONV_ROW_BASE]);
     s_pending_delete = -1;
     if (s_del_timer) { app_timer_cancel(s_del_timer); s_del_timer = NULL; }
     vibes_double_pulse();
