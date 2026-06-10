@@ -36,7 +36,13 @@
       "MODEL"
     ],
     "resources": {
-      "media": []
+      "media": [
+        {
+          "type": "bitmap",
+          "name": "IMAGE_MIC",
+          "file": "images/mic.png"
+        }
+      ]
     }
   }
 }

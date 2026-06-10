@@ -1,11 +1,14 @@
 #include <pebble.h>
 
 #define CONVO_SIZE 4096
-#define GREETING "AiFace\nPress Select and speak.\nHold Select to clear."
+#define TEXT_PADDING 4
+#define GREETING "AiFace\n\nPress the mic to talk.\nHold to clear."
 
 static Window *s_window;
 static ScrollLayer *s_scroll_layer;
 static TextLayer *s_text_layer;
+static ActionBarLayer *s_action_bar;
+static GBitmap *s_mic_icon;
 #if defined(PBL_MICROPHONE)
 static DictationSession *s_dictation;
 #endif
@@ -14,23 +17,41 @@ static char s_convo[CONVO_SIZE];
 static char s_display[CONVO_SIZE + 16];
 static bool s_waiting;
 
+// Width available for conversation text, i.e. screen minus the action bar.
+static int16_t prv_content_width(void) {
+  return layer_get_bounds(window_get_root_layer(s_window)).size.w - ACTION_BAR_WIDTH;
+}
+
 static void prv_refresh(void) {
   snprintf(s_display, sizeof(s_display), "%s%s", s_convo, s_waiting ? " ..." : "");
   text_layer_set_text(s_text_layer, s_display);
 
-  GRect bounds = layer_get_bounds(window_get_root_layer(s_window));
+  int16_t screen_h = layer_get_bounds(window_get_root_layer(s_window)).size.h;
+  int16_t text_w = prv_content_width() - TEXT_PADDING * 2;
   // Give the layer full height first; content_size measures within the current
   // frame, so a short frame would clip the measurement of longer replies.
-  text_layer_set_size(s_text_layer, GSize(bounds.size.w - 8, CONVO_SIZE));
+  text_layer_set_size(s_text_layer, GSize(text_w, CONVO_SIZE));
   GSize content = text_layer_get_content_size(s_text_layer);
   content.h += 12;
-  text_layer_set_size(s_text_layer, GSize(bounds.size.w - 8, content.h));
-  scroll_layer_set_content_size(s_scroll_layer, GSize(bounds.size.w, content.h));
+  text_layer_set_size(s_text_layer, GSize(text_w, content.h));
+  scroll_layer_set_content_size(s_scroll_layer, GSize(prv_content_width(), content.h));
 
-  int16_t overflow = content.h - bounds.size.h;
+  int16_t overflow = content.h - screen_h;
   if (overflow > 0) {
     scroll_layer_set_content_offset(s_scroll_layer, GPoint(0, -overflow), true);
   }
+}
+
+static void prv_scroll(int16_t dy) {
+  GPoint offset = scroll_layer_get_content_offset(s_scroll_layer);
+  GSize content = scroll_layer_get_content_size(s_scroll_layer);
+  int16_t screen_h = layer_get_bounds(window_get_root_layer(s_window)).size.h;
+  int16_t min_y = screen_h - content.h;  // most-negative offset (bottom)
+  if (min_y > 0) min_y = 0;
+  offset.y += dy;
+  if (offset.y > 0) offset.y = 0;
+  if (offset.y < min_y) offset.y = min_y;
+  scroll_layer_set_content_offset(s_scroll_layer, offset, true);
 }
 
 static void prv_convo_append(const char *str) {
@@ -92,9 +113,19 @@ static void prv_select_long_handler(ClickRecognizerRef recognizer, void *context
   prv_refresh();
 }
 
+static void prv_up_handler(ClickRecognizerRef recognizer, void *context) {
+  prv_scroll(layer_get_bounds(window_get_root_layer(s_window)).size.h - 24);
+}
+
+static void prv_down_handler(ClickRecognizerRef recognizer, void *context) {
+  prv_scroll(-(layer_get_bounds(window_get_root_layer(s_window)).size.h - 24));
+}
+
 static void prv_click_config(void *context) {
   window_single_click_subscribe(BUTTON_ID_SELECT, prv_select_handler);
   window_long_click_subscribe(BUTTON_ID_SELECT, 500, prv_select_long_handler, NULL);
+  window_single_repeating_click_subscribe(BUTTON_ID_UP, 100, prv_up_handler);
+  window_single_repeating_click_subscribe(BUTTON_ID_DOWN, 100, prv_down_handler);
 }
 
 static void prv_inbox_received(DictionaryIterator *iter, void *context) {
@@ -126,14 +157,12 @@ static void prv_window_load(Window *window) {
   Layer *root = window_get_root_layer(window);
   GRect bounds = layer_get_bounds(root);
 
-  s_scroll_layer = scroll_layer_create(bounds);
+  GRect scroll_frame = GRect(0, 0, bounds.size.w - ACTION_BAR_WIDTH, bounds.size.h);
+  s_scroll_layer = scroll_layer_create(scroll_frame);
   scroll_layer_set_shadow_hidden(s_scroll_layer, true);
-  scroll_layer_set_click_config_onto_window(s_scroll_layer, window);
-  scroll_layer_set_callbacks(s_scroll_layer, (ScrollLayerCallbacks) {
-    .click_config_provider = prv_click_config,
-  });
 
-  s_text_layer = text_layer_create(GRect(4, 0, bounds.size.w - 8, 2000));
+  s_text_layer = text_layer_create(GRect(TEXT_PADDING, 2,
+                                         scroll_frame.size.w - TEXT_PADDING * 2, 2000));
   text_layer_set_font(s_text_layer, fonts_get_system_font(FONT_KEY_GOTHIC_24));
   text_layer_set_text_color(s_text_layer, GColorBlack);
   text_layer_set_background_color(s_text_layer, GColorClear);
@@ -141,17 +170,28 @@ static void prv_window_load(Window *window) {
   scroll_layer_add_child(s_scroll_layer, text_layer_get_layer(s_text_layer));
   layer_add_child(root, scroll_layer_get_layer(s_scroll_layer));
 
+  s_mic_icon = gbitmap_create_with_resource(RESOURCE_ID_IMAGE_MIC);
+  s_action_bar = action_bar_layer_create();
+  action_bar_layer_set_background_color(s_action_bar,
+                                        PBL_IF_COLOR_ELSE(GColorCobaltBlue, GColorBlack));
+  action_bar_layer_set_icon_animated(s_action_bar, BUTTON_ID_SELECT, s_mic_icon, true);
+  action_bar_layer_set_click_config_provider(s_action_bar, prv_click_config);
+  action_bar_layer_add_to_window(s_action_bar, window);
+
   prv_convo_append(GREETING);
   prv_refresh();
 }
 
 static void prv_window_unload(Window *window) {
+  action_bar_layer_destroy(s_action_bar);
+  gbitmap_destroy(s_mic_icon);
   text_layer_destroy(s_text_layer);
   scroll_layer_destroy(s_scroll_layer);
 }
 
 static void prv_init(void) {
   s_window = window_create();
+  window_set_background_color(s_window, GColorWhite);
   window_set_window_handlers(s_window, (WindowHandlers) {
     .load = prv_window_load,
     .unload = prv_window_unload,
