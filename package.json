@@ -39,7 +39,11 @@
       "DELETE_CHAT",
       "SYNC",
       "DISPLAY_RESET",
-      "CONV_LIST"
+      "CONV_LIST",
+      "NO_KEY",
+      "CANCEL",
+      "MODEL_NAME",
+      "NEXT_MODEL"
     ],
     "resources": {
       "media": [
