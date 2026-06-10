@@ -34,7 +34,12 @@
       "STATUS",
       "APIKEY",
       "MODEL",
-      "CLEAR"
+      "NEW_CHAT",
+      "SWITCH_CHAT",
+      "DELETE_CHAT",
+      "SYNC",
+      "DISPLAY_RESET",
+      "CONV_LIST"
     ],
     "resources": {
       "media": [
