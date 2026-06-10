@@ -29,6 +29,14 @@ static int s_pulse_phase;
 static Window *s_menu_window;
 static MenuLayer *s_menu_layer;
 
+static Window *s_settings_window;
+static MenuLayer *s_settings_menu;
+
+#define MAX_MODELS 8
+static char s_model_names[MAX_MODELS][40];
+static int s_model_count;
+static int s_model_current;
+
 #if defined(PBL_MICROPHONE)
 static DictationSession *s_dictation;
 #endif
@@ -48,8 +56,6 @@ static AppTimer *s_transient_timer;
 
 static bool s_no_key;            // phone reports the API key is missing
 static bool s_connected = true;  // phone Bluetooth connection state
-
-static char s_model_name[40];    // short model name for the menu
 
 // Conversation list mirror for the menu.
 static char s_conv_ids[MAX_CONVS][ID_LEN];
@@ -266,6 +272,90 @@ static void prv_dictation_handler(DictationSession *session, DictationSessionSta
 }
 #endif
 
+// ---- settings: model picker ---------------------------------------------
+
+static char s_model_buf[512];  // static: avoids a large stack allocation
+
+static void prv_parse_models(const char *s) {
+  s_model_count = 0;
+  s_model_current = 0;
+  size_t n = strlen(s);
+  if (n >= sizeof(s_model_buf)) n = sizeof(s_model_buf) - 1;
+  memcpy(s_model_buf, s, n);
+  s_model_buf[n] = '\0';
+
+  char *p = s_model_buf;
+  while (*p && s_model_count < MAX_MODELS) {
+    char *line = p;
+    char *nl = line;
+    while (*nl && *nl != '\n') nl++;
+    if (*nl == '\n') { *nl = '\0'; p = nl + 1; } else { p = nl; }
+
+    if (line[0] == '*') { s_model_current = s_model_count; line++; }
+    strncpy(s_model_names[s_model_count], line, sizeof(s_model_names[0]) - 1);
+    s_model_names[s_model_count][sizeof(s_model_names[0]) - 1] = '\0';
+    s_model_count++;
+  }
+  if (s_settings_menu) menu_layer_reload_data(s_settings_menu);
+}
+
+static uint16_t prv_settings_num_rows(MenuLayer *menu, uint16_t section, void *ctx) {
+  return s_model_count;
+}
+
+static int16_t prv_settings_header_height(MenuLayer *menu, uint16_t section, void *ctx) {
+  return MENU_CELL_BASIC_HEADER_HEIGHT;
+}
+
+static void prv_settings_draw_header(GContext *gctx, const Layer *cell, uint16_t section, void *ctx) {
+  menu_cell_basic_header_draw(gctx, cell, "Model");
+}
+
+static void prv_settings_draw_row(GContext *gctx, const Layer *cell, MenuIndex *idx, void *ctx) {
+  menu_cell_basic_draw(gctx, cell, s_model_names[idx->row],
+                       (idx->row == s_model_current) ? "in use" : NULL, NULL);
+}
+
+static void prv_settings_select(MenuLayer *menu, MenuIndex *idx, void *ctx) {
+  s_model_current = idx->row;  // optimistic; phone confirms with MODEL_LIST
+  DictionaryIterator *out;
+  if (app_message_outbox_begin(&out) == APP_MSG_OK) {
+    dict_write_uint8(out, MESSAGE_KEY_SET_MODEL, (uint8_t)idx->row);
+    app_message_outbox_send();
+  }
+  menu_layer_reload_data(menu);
+}
+
+static void prv_settings_window_load(Window *window) {
+  Layer *root = window_get_root_layer(window);
+  s_settings_menu = menu_layer_create(layer_get_bounds(root));
+  menu_layer_set_callbacks(s_settings_menu, NULL, (MenuLayerCallbacks) {
+    .get_num_rows = prv_settings_num_rows,
+    .get_header_height = prv_settings_header_height,
+    .draw_header = prv_settings_draw_header,
+    .draw_row = prv_settings_draw_row,
+    .select_click = prv_settings_select,
+  });
+  menu_layer_set_click_config_onto_window(s_settings_menu, window);
+  layer_add_child(root, menu_layer_get_layer(s_settings_menu));
+}
+
+static void prv_settings_window_unload(Window *window) {
+  menu_layer_destroy(s_settings_menu);
+  s_settings_menu = NULL;
+}
+
+static void prv_open_settings(void) {
+  if (!s_settings_window) {
+    s_settings_window = window_create();
+    window_set_window_handlers(s_settings_window, (WindowHandlers) {
+      .load = prv_settings_window_load,
+      .unload = prv_settings_window_unload,
+    });
+  }
+  window_stack_push(s_settings_window, true);
+}
+
 // ---- conversation menu --------------------------------------------------
 
 static void prv_parse_list(const char *s) {
@@ -307,17 +397,17 @@ static void prv_delete_disarm(void *context) {
   if (s_menu_layer) menu_layer_reload_data(s_menu_layer);
 }
 
-static int prv_model_row(void) { return s_conv_count + 1; }
+static int prv_settings_row(void) { return s_conv_count + 1; }
 
 static uint16_t prv_menu_num_rows(MenuLayer *menu, uint16_t section, void *ctx) {
-  return s_conv_count + 2;  // New Chat + conversations + Model
+  return s_conv_count + 2;  // New Chat + conversations + Settings
 }
 
 static void prv_menu_draw_row(GContext *gctx, const Layer *cell, MenuIndex *idx, void *ctx) {
   if (idx->row == 0) {
     menu_cell_basic_draw(gctx, cell, "+ New Chat", NULL, NULL);
-  } else if (idx->row == prv_model_row()) {
-    menu_cell_basic_draw(gctx, cell, "Model", s_model_name[0] ? s_model_name : "default", NULL);
+  } else if (idx->row == prv_settings_row()) {
+    menu_cell_basic_draw(gctx, cell, "Settings", NULL, NULL);
   } else {
     int i = idx->row - 1;
     const char *subtitle = (idx->row == s_pending_delete) ? "hold again to delete"
@@ -331,8 +421,8 @@ static void prv_menu_select(MenuLayer *menu, MenuIndex *idx, void *ctx) {
   if (idx->row == 0) {
     prv_send_u8(MESSAGE_KEY_NEW_CHAT);
     window_stack_pop(true);
-  } else if (idx->row == prv_model_row()) {
-    prv_send_u8(MESSAGE_KEY_NEXT_MODEL);  // cycles; phone pushes back MODEL_NAME
+  } else if (idx->row == prv_settings_row()) {
+    prv_open_settings();
   } else {
     prv_send_str(MESSAGE_KEY_SWITCH_CHAT, s_conv_ids[idx->row - 1]);
     window_stack_pop(true);
@@ -340,7 +430,7 @@ static void prv_menu_select(MenuLayer *menu, MenuIndex *idx, void *ctx) {
 }
 
 static void prv_menu_select_long(MenuLayer *menu, MenuIndex *idx, void *ctx) {
-  if (idx->row < 1 || idx->row >= prv_model_row()) return;  // conversations only
+  if (idx->row < 1 || idx->row >= prv_settings_row()) return;  // conversations only
   if (s_pending_delete == idx->row) {
     prv_send_str(MESSAGE_KEY_DELETE_CHAT, s_conv_ids[idx->row - 1]);
     s_pending_delete = -1;
@@ -436,12 +526,8 @@ static void prv_inbox_received(DictionaryIterator *iter, void *context) {
   Tuple *list = dict_find(iter, MESSAGE_KEY_CONV_LIST);
   if (list) prv_parse_list(list->value->cstring);
 
-  Tuple *model = dict_find(iter, MESSAGE_KEY_MODEL_NAME);
-  if (model) {
-    strncpy(s_model_name, model->value->cstring, sizeof(s_model_name) - 1);
-    s_model_name[sizeof(s_model_name) - 1] = '\0';
-    if (s_menu_layer) menu_layer_reload_data(s_menu_layer);
-  }
+  Tuple *models = dict_find(iter, MESSAGE_KEY_MODEL_LIST);
+  if (models) prv_parse_models(models->value->cstring);
 
   Tuple *nokey = dict_find(iter, MESSAGE_KEY_NO_KEY);
   if (nokey) {
@@ -584,6 +670,7 @@ static void prv_deinit(void) {
 #if defined(PBL_MICROPHONE)
   if (s_dictation) dictation_session_destroy(s_dictation);
 #endif
+  if (s_settings_window) window_destroy(s_settings_window);
   if (s_menu_window) window_destroy(s_menu_window);
   window_destroy(s_window);
 }

@@ -120,11 +120,12 @@ function modelShort(m) {
   return i >= 0 ? m.slice(i + 1) : m;
 }
 
-function nextModel() {
-  var idx = PRESET_MODELS.indexOf(currentModel());
-  store.model = PRESET_MODELS[(idx + 1) % PRESET_MODELS.length];
-  saveStore();
-  pushModelName();
+function setModel(index) {
+  if (index >= 0 && index < PRESET_MODELS.length) {
+    store.model = PRESET_MODELS[index];
+    saveStore();
+  }
+  pushModelList();
 }
 
 // ---- serialized outbound queue ------------------------------------------
@@ -177,7 +178,15 @@ function serializeList() {
 }
 
 function pushList() { enqueue({ CONV_LIST: serializeList() }); }
-function pushModelName() { enqueue({ MODEL_NAME: modelShort(currentModel()) }); }
+
+function serializeModels() {
+  var cur = currentModel();
+  return PRESET_MODELS.map(function(m) {
+    return (m === cur ? '*' : '') + modelShort(m);
+  }).join('\n');
+}
+
+function pushModelList() { enqueue({ MODEL_LIST: serializeModels() }); }
 function pushNoKey() { enqueue({ NO_KEY: hasKey() ? 0 : 1 }); }
 function sendStatus(msg) { enqueue({ STATUS: msg }); enqueue({ FINAL: 1 }); }
 
@@ -186,7 +195,7 @@ function sendStatus(msg) { enqueue({ STATUS: msg }); enqueue({ FINAL: 1 }); }
 Pebble.addEventListener('ready', function() {
   ensureActive();
   pushNoKey();
-  pushModelName();
+  pushModelList();
   pushDisplay();
   pushList();
 });
@@ -195,7 +204,7 @@ Pebble.addEventListener('ready', function() {
 Pebble.addEventListener('webviewclosed', function() {
   setTimeout(function() {
     pushNoKey();
-    pushModelName();
+    pushModelList();
   }, 150);
 });
 
@@ -213,9 +222,9 @@ Pebble.addEventListener('appmessage', function(e) {
     return;
   }
   if (p.DELETE_CHAT !== undefined) { deleteConversation(p.DELETE_CHAT); pushDisplay(); pushList(); return; }
-  if (p.NEXT_MODEL !== undefined) { nextModel(); return; }
+  if (p.SET_MODEL !== undefined) { setModel(p.SET_MODEL); return; }
   if (p.CANCEL !== undefined) { cancelRequest(); return; }
-  if (p.SYNC !== undefined) { ensureActive(); pushNoKey(); pushModelName(); pushDisplay(); pushList(); return; }
+  if (p.SYNC !== undefined) { ensureActive(); pushNoKey(); pushModelList(); pushDisplay(); pushList(); return; }
   if (p.TRANSCRIPT) { ask(p.TRANSCRIPT); return; }
 });
 

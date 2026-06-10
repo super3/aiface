@@ -42,8 +42,8 @@
       "CONV_LIST",
       "NO_KEY",
       "CANCEL",
-      "MODEL_NAME",
-      "NEXT_MODEL"
+      "MODEL_LIST",
+      "SET_MODEL"
     ],
     "resources": {
       "media": [
