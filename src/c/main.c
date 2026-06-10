@@ -172,8 +172,7 @@ static void prv_window_load(Window *window) {
 
   s_mic_icon = gbitmap_create_with_resource(RESOURCE_ID_IMAGE_MIC);
   s_action_bar = action_bar_layer_create();
-  action_bar_layer_set_background_color(s_action_bar,
-                                        PBL_IF_COLOR_ELSE(GColorCobaltBlue, GColorBlack));
+  action_bar_layer_set_background_color(s_action_bar, GColorBlack);
   action_bar_layer_set_icon_animated(s_action_bar, BUTTON_ID_SELECT, s_mic_icon, true);
   action_bar_layer_set_click_config_provider(s_action_bar, prv_click_config);
   action_bar_layer_add_to_window(s_action_bar, window);
